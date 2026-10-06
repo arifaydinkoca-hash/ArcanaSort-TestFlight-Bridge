@@ -84,6 +84,7 @@ jobs:
           test -f secure/support/Tools/inspect_ipa.sh
           test -f secure/support/Tools/upload_testflight.sh
           test -f secure/support/Tools/verify_testflight_build.sh
+          perl -pi -e 's/\r$//' secure/support/Tools/*.sh
 
       - name: Build and sign Build 9 IPA
         shell: bash
