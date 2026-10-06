@@ -3,9 +3,10 @@ on:
   workflow_dispatch:
 jobs:
   probe:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - run: |
           sw_vers
           xcodebuild -version
           echo PUBLIC_MACOS_OK
+
