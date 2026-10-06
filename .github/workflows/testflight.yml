@@ -67,6 +67,12 @@ jobs:
           openssl enc -d -aes-256-cbc -pbkdf2 -in encrypted/xcode.enc -out xcode.zip -pass file:bridge-pass.txt
           unzip -q secure-bundle.zip -d secure
           unzip -q xcode.zip -d BuildArtifacts/iOSXcode
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path("secure/support/Tools").glob("*.sh"):
+              data = path.read_bytes()
+              path.write_bytes(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+          PY
           test -d BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj
           test -f secure/ArcanaSort_Distribution.p12
           test -f secure/Arcana_Sort_App_Store.mobileprovision
