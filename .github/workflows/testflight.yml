@@ -1,0 +1,154 @@
+name: Build 9 TestFlight Bridge
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  sign-upload:
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    env:
+      EXPECTED_BUNDLE_ID: com.arcanasort.game
+      EXPECTED_MARKETING_VERSION: "0.9.0"
+      EXPECTED_BUILD_NUMBER: "9"
+      EXPECTED_MIN_IOS: "15.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate one-time bridge key
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out bridge-private.pem
+          openssl pkey -in bridge-private.pem -pubout -out bridge-public.pem
+
+      - name: Publish one-time public key
+        uses: actions/upload-artifact@v4
+        with:
+          name: testflight-bridge-public
+          path: bridge-public.pem
+          retention-days: 1
+
+      - name: Wait for encrypted Build 9 bridge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="bridge-$GITHUB_RUN_ID"
+          mkdir -p encrypted
+          for i in $(seq 1 120); do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir encrypted
+              test -f encrypted/key.enc
+              test -f encrypted/payload.enc
+              test -f encrypted/xcode.enc
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for encrypted bridge release" >&2
+          exit 1
+
+      - name: Decrypt bridge payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p secure BuildArtifacts/iOSXcode
+          openssl pkeyutl -decrypt -inkey bridge-private.pem -in encrypted/key.enc -out bridge-pass.txt -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256
+          openssl enc -d -aes-256-cbc -pbkdf2 -in encrypted/payload.enc -out secure-bundle.zip -pass file:bridge-pass.txt
+          openssl enc -d -aes-256-cbc -pbkdf2 -in encrypted/xcode.enc -out xcode.zip -pass file:bridge-pass.txt
+          unzip -q secure-bundle.zip -d secure
+          unzip -q xcode.zip -d BuildArtifacts/iOSXcode
+          test -d BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj
+          test -f secure/ArcanaSort_Distribution.p12
+          test -f secure/Arcana_Sort_App_Store.mobileprovision
+          test -f secure/p12-password.txt
+          test -f secure/ASC_KEY_ID.txt
+          test -f secure/ASC_ISSUER_ID.txt
+          test -f secure/ASC_PRIVATE_KEY.p8
+          test -f secure/support/Tools/sign_xcode_archive_for_testflight.sh
+          test -f secure/support/Tools/inspect_ipa.sh
+          test -f secure/support/Tools/upload_testflight.sh
+          test -f secure/support/Tools/verify_testflight_build.sh
+
+      - name: Build and sign Build 9 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          cd secure/support
+          export XCODE_PROJECT_PATH="$root/BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj"
+          export ARCHIVE_PATH="$root/BuildArtifacts/ArcanaSort-Fallback.xcarchive"
+          export P12_PATH="$root/secure/ArcanaSort_Distribution.p12"
+          export PROVISION_PATH="$root/secure/Arcana_Sort_App_Store.mobileprovision"
+          export P12_PASSWORD="$(cat "$root/secure/p12-password.txt")"
+          export OUTPUT_IPA="$root/BuildArtifacts/ArcanaSort-Fallback-signed.ipa"
+          bash Tools/sign_xcode_archive_for_testflight.sh
+
+      - name: Inspect signed Build 9 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          cd secure/support
+          export IPA_PATH="$root/BuildArtifacts/ArcanaSort-Fallback-signed.ipa"
+          export EXPECTED_BUNDLE_ID EXPECTED_MARKETING_VERSION EXPECTED_BUILD_NUMBER EXPECTED_MIN_IOS
+          bash Tools/inspect_ipa.sh
+
+      - name: Upload Build 9 to TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          export ASC_KEY_ID="$(cat secure/ASC_KEY_ID.txt)"
+          export ASC_ISSUER_ID="$(cat secure/ASC_ISSUER_ID.txt)"
+          export ASC_PRIVATE_KEY="$(cat secure/ASC_PRIVATE_KEY.p8)"
+          umask 077
+          key_dir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$key_dir"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$key_dir/AuthKey_${ASC_KEY_ID}.p8"
+          export IPA_PATH="$root/BuildArtifacts/ArcanaSort-Fallback-signed.ipa"
+          cd secure/support
+          bash Tools/upload_testflight.sh
+
+      - name: Wait for TestFlight processing
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ASC_KEY_ID="$(cat secure/ASC_KEY_ID.txt)"
+          export ASC_ISSUER_ID="$(cat secure/ASC_ISSUER_ID.txt)"
+          export ASC_PRIVATE_KEY="$(cat secure/ASC_PRIVATE_KEY.p8)"
+          export BUNDLE_ID="$EXPECTED_BUNDLE_ID"
+          export BUILD_NUMBER="$EXPECTED_BUILD_NUMBER"
+          export MARKETING_VERSION="$EXPECTED_MARKETING_VERSION"
+          cd secure/support
+          for i in $(seq 1 60); do
+            set +e
+            bash Tools/verify_testflight_build.sh
+            rc=$?
+            set -e
+            case "$rc" in
+              0) echo "BUILD9_TESTFLIGHT_VALID"; exit 0 ;;
+              10|11) sleep 30 ;;
+              *) echo "TestFlight verification failed rc=$rc" >&2; exit "$rc" ;;
+            esac
+          done
+          echo "Timed out waiting for TestFlight processing" >&2
+          exit 1
+
+      - name: Clean bridge material
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set +e
+          rm -rf secure encrypted BuildArtifacts
+          rm -f bridge-private.pem bridge-public.pem bridge-pass.txt secure-bundle.zip xcode.zip
+          rm -rf "$HOME/.appstoreconnect/private_keys"
