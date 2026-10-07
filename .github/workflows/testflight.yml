@@ -20,6 +20,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Select Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode_app="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print | sort | tail -n 1)"
+          test -n "$xcode_app" || { echo "Xcode 26+ is not installed on this runner" >&2; ls -1d /Applications/Xcode*.app >&2 || true; exit 2; }
+          sudo xcode-select -s "$xcode_app/Contents/Developer"
+          xcodebuild -version
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "IPHONEOS_SDK=$sdk"
+          case "$sdk" in 26.*|2[7-9].*) ;; *) echo "iOS 26+ SDK required, got $sdk" >&2; exit 2 ;; esac
+
       - name: Generate one-time bridge key
         shell: bash
         run: |
