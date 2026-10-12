@@ -1,4 +1,4 @@
-name: Build 11 TestFlight Bridge
+name: Build 12 TestFlight Bridge
 
 on:
   workflow_dispatch:
@@ -14,7 +14,7 @@ jobs:
     env:
       EXPECTED_BUNDLE_ID: com.arcanasort.game
       EXPECTED_MARKETING_VERSION: "0.9.0"
-      EXPECTED_BUILD_NUMBER: "11"
+      EXPECTED_BUILD_NUMBER: "12"
       EXPECTED_MIN_IOS: "15.0"
 
     steps:
@@ -47,7 +47,7 @@ jobs:
           path: bridge-public.pem
           retention-days: 1
 
-      - name: Wait for encrypted Build 11 bridge
+      - name: Wait for encrypted Build 12 bridge
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -92,13 +92,14 @@ jobs:
           test -f secure/ASC_KEY_ID.txt
           test -f secure/ASC_ISSUER_ID.txt
           test -f secure/ASC_PRIVATE_KEY.p8
+          test -f secure/support/Tools/prepare_xcode_container.sh
           test -f secure/support/Tools/sign_xcode_archive_for_testflight.sh
           test -f secure/support/Tools/inspect_ipa.sh
           test -f secure/support/Tools/upload_testflight.sh
           test -f secure/support/Tools/verify_testflight_build.sh
           perl -pi -e 's/\r$//' secure/support/Tools/*.sh
 
-      - name: Build and sign Build 11 IPA
+      - name: Build and sign Build 12 IPA
         shell: bash
         run: |
           set -euo pipefail
@@ -112,7 +113,7 @@ jobs:
           export OUTPUT_IPA="$root/BuildArtifacts/ArcanaSort-Fallback-signed.ipa"
           bash Tools/sign_xcode_archive_for_testflight.sh
 
-      - name: Inspect signed Build 11 IPA
+      - name: Inspect signed Build 12 IPA
         shell: bash
         run: |
           set -euo pipefail
@@ -122,7 +123,7 @@ jobs:
           export EXPECTED_BUNDLE_ID EXPECTED_MARKETING_VERSION EXPECTED_BUILD_NUMBER EXPECTED_MIN_IOS
           bash Tools/inspect_ipa.sh
 
-      - name: Upload Build 11 to TestFlight
+      - name: Upload Build 12 to TestFlight
         shell: bash
         run: |
           set -euo pipefail
@@ -155,7 +156,7 @@ jobs:
             rc=$?
             set -e
             case "$rc" in
-              0) echo "BUILD11_TESTFLIGHT_VALID"; exit 0 ;;
+              0) echo "BUILD12_TESTFLIGHT_VALID"; exit 0 ;;
               10|11) sleep 30 ;;
               *) echo "TestFlight verification failed rc=$rc" >&2; exit "$rc" ;;
             esac
