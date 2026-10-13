@@ -10,7 +10,7 @@ permissions:
 jobs:
   sign-upload:
     runs-on: macos-15-intel
-    timeout-minutes: 45
+    timeout-minutes: 120
     env:
       EXPECTED_BUNDLE_ID: com.arcanasort.game
       EXPECTED_MARKETING_VERSION: "0.9.0"
