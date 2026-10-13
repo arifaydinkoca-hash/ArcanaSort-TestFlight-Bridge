@@ -75,8 +75,8 @@ jobs:
           umask 077
           mkdir -p secure BuildArtifacts/iOSXcode
           openssl pkeyutl -decrypt -inkey bridge-private.pem -in encrypted/key.enc -out bridge-pass.txt -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256
-          openssl enc -d -aes-256-cbc -pbkdf2 -in encrypted/payload.enc -out secure-bundle.zip -pass file:bridge-pass.txt
-          openssl enc -d -aes-256-cbc -pbkdf2 -in encrypted/xcode.enc -out xcode.zip -pass file:bridge-pass.txt
+          openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/payload.enc -out secure-bundle.zip -pass file:bridge-pass.txt
+          openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/xcode.enc -out xcode.zip -pass file:bridge-pass.txt
           unzip -q secure-bundle.zip -d secure
           unzip -q xcode.zip -d BuildArtifacts/iOSXcode
           python3 - <<'PY'
