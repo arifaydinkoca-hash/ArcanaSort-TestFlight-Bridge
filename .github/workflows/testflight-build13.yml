@@ -78,7 +78,8 @@ jobs:
           openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/xcode.enc -out xcode-package.zip -pass file:xcode-pass.txt
           openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/payload.enc -out signing-bundle.zip -pass file:signing-pass.txt
           unzip -q xcode-package.zip -d .
-          mkdir -p secure BuildArtifacts`r`n          unzip -q signing-bundle.zip -d secure
+          mkdir -p secure BuildArtifacts
+          unzip -q signing-bundle.zip -d secure
           python3 - <<'PY'
           from pathlib import Path
           for path in Path("support/Tools").glob("*"):
