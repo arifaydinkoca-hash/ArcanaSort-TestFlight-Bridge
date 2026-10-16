@@ -78,8 +78,7 @@ jobs:
           openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/xcode.enc -out xcode-package.zip -pass file:xcode-pass.txt
           openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/payload.enc -out signing-bundle.zip -pass file:signing-pass.txt
           unzip -q xcode-package.zip -d .
-          mkdir -p secure
-          unzip -q signing-bundle.zip -d secure
+          mkdir -p secure BuildArtifacts`r`n          unzip -q signing-bundle.zip -d secure
           python3 - <<'PY'
           from pathlib import Path
           for path in Path("support/Tools").glob("*"):
@@ -87,7 +86,7 @@ jobs:
                   data = path.read_bytes()
                   path.write_bytes(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
           PY
-          test -d BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj
+          test -d iOSXcode/Unity-iPhone.xcodeproj
           test -f support/Tools/sign_xcode_archive_for_testflight.sh
           test -f support/Tools/inspect_ipa.sh
           test -f support/Tools/upload_testflight.sh
@@ -106,15 +105,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 support/Tools/verify_xcode_release_version.py BuildArtifacts/iOSXcode support/Assets/Resources/Release/release_config.json
-          xcodebuild -list -project BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj
+          python3 support/Tools/verify_xcode_release_version.py iOSXcode support/Assets/Resources/Release/release_config.json
+          xcodebuild -list -project iOSXcode/Unity-iPhone.xcodeproj
 
       - name: Build and sign Build 13 IPA
         shell: bash
         run: |
           set -euo pipefail
           root="$PWD"
-          export XCODE_PROJECT_PATH="$root/BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj"
+          export XCODE_PROJECT_PATH="$root/iOSXcode/Unity-iPhone.xcodeproj"
           export ARCHIVE_PATH="$root/BuildArtifacts/ArcanaSort-Build13.xcarchive"
           export P12_PATH="$root/secure/ArcanaSort_Distribution.p12"
           export PROVISION_PATH="$root/secure/Arcana_Sort_App_Store.mobileprovision"
