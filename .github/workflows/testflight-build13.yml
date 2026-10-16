@@ -1,0 +1,182 @@
+name: Build 13 TestFlight Bridge
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sign-upload:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    env:
+      EXPECTED_BUNDLE_ID: com.arcanasort.game
+      EXPECTED_MARKETING_VERSION: "0.9.0"
+      EXPECTED_BUILD_NUMBER: "13"
+      EXPECTED_MIN_IOS: "15.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode_app="$(find /Applications -maxdepth 1 -type d -name 'Xcode_26*.app' -print | sort | tail -n 1)"
+          test -n "$xcode_app" || { echo "Xcode 26+ is not installed" >&2; exit 2; }
+          sudo xcode-select -s "$xcode_app/Contents/Developer"
+          xcodebuild -version
+          sdk="$(xcrun --sdk iphoneos --show-sdk-version)"
+          case "$sdk" in 26.*|2[7-9].*) ;; *) echo "iOS 26+ SDK required, got $sdk" >&2; exit 2 ;; esac
+
+      - name: Generate one-time bridge key
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out bridge-private.pem
+          openssl pkey -in bridge-private.pem -pubout -out bridge-public.pem
+
+      - name: Publish one-time public key release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="bridge-key-$GITHUB_RUN_ID"
+          gh release create "$tag" bridge-public.pem --repo "$GITHUB_REPOSITORY" --title "$tag" --notes "Ephemeral Build 13 bridge public key"
+
+      - name: Wait for encrypted Build 13 payloads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="bridge-$GITHUB_RUN_ID"
+          mkdir -p encrypted
+          for i in $(seq 1 180); do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              rm -rf encrypted/*
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir encrypted
+              if [[ -f encrypted/xcode-key.enc && -f encrypted/xcode.enc && -f encrypted/signing-key.enc && -f encrypted/payload.enc ]]; then
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for Build 13 bridge payloads" >&2
+          exit 1
+
+      - name: Decrypt Build 13 payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          openssl pkeyutl -decrypt -inkey bridge-private.pem -in encrypted/xcode-key.enc -out xcode-pass.txt -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256
+          openssl pkeyutl -decrypt -inkey bridge-private.pem -in encrypted/signing-key.enc -out signing-pass.txt -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256
+          openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/xcode.enc -out xcode-package.zip -pass file:xcode-pass.txt
+          openssl enc -d -aes-256-cbc -pbkdf2 -md sha256 -in encrypted/payload.enc -out signing-bundle.zip -pass file:signing-pass.txt
+          unzip -q xcode-package.zip -d .
+          mkdir -p secure
+          unzip -q signing-bundle.zip -d secure
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path("support/Tools").glob("*"):
+              if path.is_file():
+                  data = path.read_bytes()
+                  path.write_bytes(data.replace(b"\r\n", b"\n").replace(b"\r", b"\n"))
+          PY
+          test -d BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj
+          test -f support/Tools/sign_xcode_archive_for_testflight.sh
+          test -f support/Tools/inspect_ipa.sh
+          test -f support/Tools/upload_testflight.sh
+          test -f support/Tools/verify_testflight_build.sh
+          test -f support/Tools/verify_xcode_release_version.py
+          test -f support/Assets/Resources/Release/release_config.json
+          test -f secure/ArcanaSort_Distribution.p12
+          test -f secure/Arcana_Sort_App_Store.mobileprovision
+          test -f secure/p12-password.txt
+          test -f secure/ASC_KEY_ID.txt
+          test -f secure/ASC_ISSUER_ID.txt
+          test -f secure/ASC_PRIVATE_KEY.p8
+          perl -pi -e 's/\r$//' support/Tools/*.sh
+
+      - name: Verify Build 13 Xcode identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 support/Tools/verify_xcode_release_version.py BuildArtifacts/iOSXcode support/Assets/Resources/Release/release_config.json
+          xcodebuild -list -project BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj
+
+      - name: Build and sign Build 13 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$PWD"
+          export XCODE_PROJECT_PATH="$root/BuildArtifacts/iOSXcode/Unity-iPhone.xcodeproj"
+          export ARCHIVE_PATH="$root/BuildArtifacts/ArcanaSort-Build13.xcarchive"
+          export P12_PATH="$root/secure/ArcanaSort_Distribution.p12"
+          export PROVISION_PATH="$root/secure/Arcana_Sort_App_Store.mobileprovision"
+          export P12_PASSWORD="$(cat "$root/secure/p12-password.txt")"
+          export OUTPUT_IPA="$root/BuildArtifacts/ArcanaSort-Build13-signed.ipa"
+          bash support/Tools/sign_xcode_archive_for_testflight.sh
+
+      - name: Inspect signed Build 13 IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          export IPA_PATH="$PWD/BuildArtifacts/ArcanaSort-Build13-signed.ipa"
+          export EXPECTED_BUNDLE_ID EXPECTED_MARKETING_VERSION EXPECTED_BUILD_NUMBER EXPECTED_MIN_IOS
+          bash support/Tools/inspect_ipa.sh
+
+      - name: Upload Build 13 to TestFlight
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ASC_KEY_ID="$(cat secure/ASC_KEY_ID.txt)"
+          export ASC_ISSUER_ID="$(cat secure/ASC_ISSUER_ID.txt)"
+          export ASC_PRIVATE_KEY="$(cat secure/ASC_PRIVATE_KEY.p8)"
+          umask 077
+          key_dir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$key_dir"
+          printf '%s' "$ASC_PRIVATE_KEY" > "$key_dir/AuthKey_${ASC_KEY_ID}.p8"
+          export IPA_PATH="$PWD/BuildArtifacts/ArcanaSort-Build13-signed.ipa"
+          bash support/Tools/upload_testflight.sh
+
+      - name: Wait for TestFlight processing
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ASC_KEY_ID="$(cat secure/ASC_KEY_ID.txt)"
+          export ASC_ISSUER_ID="$(cat secure/ASC_ISSUER_ID.txt)"
+          export ASC_PRIVATE_KEY="$(cat secure/ASC_PRIVATE_KEY.p8)"
+          export BUNDLE_ID="$EXPECTED_BUNDLE_ID"
+          export BUILD_NUMBER="$EXPECTED_BUILD_NUMBER"
+          export MARKETING_VERSION="$EXPECTED_MARKETING_VERSION"
+          for i in $(seq 1 60); do
+            set +e
+            bash support/Tools/verify_testflight_build.sh
+            rc=$?
+            set -e
+            case "$rc" in
+              0) echo "BUILD13_TESTFLIGHT_VALID"; exit 0 ;;
+              10|11) sleep 30 ;;
+              *) echo "TestFlight verification failed rc=$rc" >&2; exit "$rc" ;;
+            esac
+          done
+          echo "Timed out waiting for TestFlight processing" >&2
+          exit 1
+
+      - name: Clean bridge material and releases
+        if: ${{ always() }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          rm -rf secure encrypted support BuildArtifacts
+          rm -f bridge-private.pem bridge-public.pem xcode-pass.txt signing-pass.txt xcode-package.zip signing-bundle.zip
+          rm -rf "$HOME/.appstoreconnect/private_keys"
+          gh release delete "bridge-key-$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
+          gh release delete "bridge-$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 || true
